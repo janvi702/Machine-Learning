@@ -1,127 +1,143 @@
+# Import required libraries
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.datasets import make_blobs
+from sklearn.metrics import silhouette_score, silhouette_samples
+from sklearn.preprocessing import StandardScaler
 
-np.random.seed(42)
-plt.style.use('seaborn-v0_8-whitegrid')
+RANDOM_STATE = 42
+np.random.seed(RANDOM_STATE)
+sns.set_theme(style='whitegrid', context='notebook')
+print('Libraries imported successfully.')
 
-X = np.linspace(1, 10, 30)
-noise = np.random.normal(0, 4, size=X.shape)
-y = 32 + 6.2 * X + noise
+centers = [(28, 25), (32, 78), (68, 30), (72, 75)]
+cluster_std = [6.5, 7.0, 7.5, 6.0]
+X_raw, _ = make_blobs(
+    n_samples=320, centers=centers, cluster_std=cluster_std,
+    random_state=RANDOM_STATE
+)
+df = pd.DataFrame(X_raw, columns=['Annual Income (₹ lakh scaled)', 'Spending Score'])
+df['Annual Income (₹ lakh scaled)'] = df['Annual Income (₹ lakh scaled)'].clip(10, 100)
+df['Spending Score'] = df['Spending Score'].clip(1, 100)
+print('Dataset shape:', df.shape)
+display(df.head(10))
 
-data = pd.DataFrame({'Study Hours': X, 'Exam Score': y})
-display(data.head())
-print(f'Number of observations: {len(data)}')
-print(data.describe().round(2))
+df.info()
+print('\nMissing values:')
+display(df.isna().sum().to_frame('Missing'))
+print('Summary statistics:')
+display(df.describe().round(2))
 
-plt.figure(figsize=(8, 5))
-plt.scatter(X, y, color='royalblue', edgecolor='black', alpha=0.8)
-plt.xlabel('Study Hours')
-plt.ylabel('Exam Score')
-plt.title('Study Hours versus Exam Score')
-plt.show()
-
-def fit_analytical(x, target):
-    x_mean = np.mean(x)
-    y_mean = np.mean(target)
-    numerator = np.sum((x - x_mean) * (target - y_mean))
-    denominator = np.sum((x - x_mean) ** 2)
-    slope = numerator / denominator
-    intercept = y_mean - slope * x_mean
-    return intercept, slope
-
-b0_analytical, b1_analytical = fit_analytical(X, y)
-y_pred_analytical = b0_analytical + b1_analytical * X
-
-print(f'Intercept (b0): {b0_analytical:.4f}')
-print(f'Slope (b1):     {b1_analytical:.4f}')
-print(f'Equation: Score = {b0_analytical:.2f} + {b1_analytical:.2f} × Study Hours')
-
-plt.figure(figsize=(8, 5))
-plt.scatter(X, y, label='Actual data', color='royalblue', edgecolor='black')
-plt.plot(X, y_pred_analytical, label='Best-fit line', color='crimson', linewidth=2.5)
-plt.xlabel('Study Hours')
-plt.ylabel('Exam Score')
-plt.title('Analytical Linear Regression')
-plt.legend()
-plt.show()
-
-def fit_gradient_descent(x, target, learning_rate=0.01, iterations=3000):
-    intercept, slope = 0.0, 0.0
-    n = len(x)
-    cost_history = []
-
-    for _ in range(iterations):
-        predictions = intercept + slope * x
-        errors = target - predictions
-        cost_history.append(np.mean(errors ** 2))
-
-        intercept_gradient = (-2 / n) * np.sum(errors)
-        slope_gradient = (-2 / n) * np.sum(x * errors)
-        intercept -= learning_rate * intercept_gradient
-        slope -= learning_rate * slope_gradient
-
-    return intercept, slope, np.array(cost_history)
-
-b0_gd, b1_gd, costs = fit_gradient_descent(X, y)
-y_pred_gd = b0_gd + b1_gd * X
-
-print(f'Gradient-descent intercept: {b0_gd:.4f}')
-print(f'Gradient-descent slope:     {b1_gd:.4f}')
-print(f'Final MSE:                  {costs[-1]:.4f}')
-
-fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
-axes[0].plot(costs, color='darkorange')
-axes[0].set_title('Convergence of Gradient Descent')
-axes[0].set_xlabel('Iteration')
-axes[0].set_ylabel('Mean Squared Error')
-
-axes[1].scatter(X, y, color='royalblue', edgecolor='black', label='Actual data')
-axes[1].plot(X, y_pred_gd, color='green', linewidth=2.5, label='Gradient-descent line')
-axes[1].set_title('Fitted Regression Line')
-axes[1].set_xlabel('Study Hours')
-axes[1].set_ylabel('Exam Score')
-axes[1].legend()
+fig, axes = plt.subplots(1, 3, figsize=(17, 4.5))
+sns.histplot(df.iloc[:, 0], kde=True, ax=axes[0], color='steelblue')
+axes[0].set_title('Income Distribution')
+sns.histplot(df.iloc[:, 1], kde=True, ax=axes[1], color='darkorange')
+axes[1].set_title('Spending Score Distribution')
+sns.scatterplot(data=df, x=df.columns[0], y=df.columns[1], ax=axes[2], s=50)
+axes[2].set_title('Customers Before Clustering')
 plt.tight_layout()
 plt.show()
 
-def regression_metrics(actual, predicted):
-    residuals = actual - predicted
-    mae = np.mean(np.abs(residuals))
-    mse = np.mean(residuals ** 2)
-    rmse = np.sqrt(mse)
-    ss_res = np.sum(residuals ** 2)
-    ss_tot = np.sum((actual - np.mean(actual)) ** 2)
-    r2 = 1 - ss_res / ss_tot
-    return {'MAE': mae, 'MSE': mse, 'RMSE': rmse, 'R²': r2}
+features = df.columns.tolist()
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(df[features])
+scaled_df = pd.DataFrame(X_scaled, columns=features)
+display(scaled_df.describe().round(3))
 
-results = pd.DataFrame({
-    'Analytical': regression_metrics(y, y_pred_analytical),
-    'Gradient Descent': regression_metrics(y, y_pred_gd)
-}).T
-display(results.round(4))
+k_values = range(2, 11)
+inertias, silhouette_scores = [], []
+for k in k_values:
+    model = KMeans(n_clusters=k, init='k-means++', n_init=20, random_state=RANDOM_STATE)
+    labels = model.fit_predict(X_scaled)
+    inertias.append(model.inertia_)
+    silhouette_scores.append(silhouette_score(X_scaled, labels))
 
-residuals = y - y_pred_analytical
+evaluation = pd.DataFrame({
+    'K': list(k_values), 'Inertia': inertias, 'Silhouette Score': silhouette_scores
+})
+display(evaluation.round(4))
+
 fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
-axes[0].scatter(y_pred_analytical, residuals, color='purple', edgecolor='black')
-axes[0].axhline(0, color='red', linestyle='--')
-axes[0].set_xlabel('Predicted Score')
-axes[0].set_ylabel('Residual')
-axes[0].set_title('Residual Plot')
-
-axes[1].scatter(y, y_pred_analytical, color='teal', edgecolor='black')
-limits = [min(y.min(), y_pred_analytical.min()), max(y.max(), y_pred_analytical.max())]
-axes[1].plot(limits, limits, 'r--', label='Ideal prediction')
-axes[1].set_xlabel('Actual Score')
-axes[1].set_ylabel('Predicted Score')
-axes[1].set_title('Actual versus Predicted')
-axes[1].legend()
+axes[0].plot(list(k_values), inertias, marker='o')
+axes[0].set(title='Elbow Method', xlabel='Number of clusters (K)', ylabel='Inertia')
+axes[1].plot(list(k_values), silhouette_scores, marker='o', color='darkgreen')
+axes[1].set(title='Silhouette Analysis', xlabel='Number of clusters (K)', ylabel='Silhouette score')
+axes[1].set_ylim(0, 1)
 plt.tight_layout()
 plt.show()
 
-def predict(x_new, intercept, slope):
-    return intercept + slope * np.asarray(x_new)
+best_k_by_silhouette = int(evaluation.loc[evaluation['Silhouette Score'].idxmax(), 'K'])
+print('Best K by silhouette score:', best_k_by_silhouette)
 
-new_hours = 7.5
-predicted_score = predict(new_hours, b0_analytical, b1_analytical)
-print(f'Predicted score for {new_hours} study hours: {predicted_score:.2f}')
+FINAL_K = 4
+kmeans = KMeans(
+    n_clusters=FINAL_K, init='k-means++', n_init=20,
+    max_iter=300, random_state=RANDOM_STATE
+)
+df['Cluster'] = kmeans.fit_predict(X_scaled)
+print('Iterations used:', kmeans.n_iter_)
+print('Final inertia:', round(kmeans.inertia_, 3))
+print('Silhouette score:', round(silhouette_score(X_scaled, df['Cluster']), 3))
+display(df.head())
+
+centroids_original = scaler.inverse_transform(kmeans.cluster_centers_)
+centroids_df = pd.DataFrame(centroids_original, columns=features)
+centroids_df.index.name = 'Cluster'
+display(centroids_df.round(2))
+
+plt.figure(figsize=(9, 6))
+sns.scatterplot(
+    data=df, x=features[0], y=features[1], hue='Cluster',
+    palette='tab10', s=65, alpha=0.75
+)
+plt.scatter(
+    centroids_original[:, 0], centroids_original[:, 1],
+    c='black', marker='X', s=260, label='Centroids', edgecolors='white'
+)
+plt.title('K-Means Customer Segments')
+plt.legend(title='Cluster', bbox_to_anchor=(1.02, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
+
+cluster_profile = df.groupby('Cluster').agg(
+    Customers=('Cluster', 'size'),
+    Mean_Income=(features[0], 'mean'),
+    Mean_Spending=(features[1], 'mean')
+).round(2)
+cluster_profile['Percentage'] = (100 * cluster_profile['Customers'] / len(df)).round(1)
+display(cluster_profile)
+
+income_mid = df[features[0]].median()
+spending_mid = df[features[1]].median()
+
+def describe_segment(row):
+    income = 'High-income' if row['Mean_Income'] >= income_mid else 'Lower-income'
+    spending = 'high-spending' if row['Mean_Spending'] >= spending_mid else 'low-spending'
+    return f'{income}, {spending}'
+
+cluster_profile['Suggested Segment'] = cluster_profile.apply(describe_segment, axis=1)
+display(cluster_profile[['Suggested Segment']])
+
+df['Silhouette'] = silhouette_samples(X_scaled, df['Cluster'])
+display(df.groupby('Cluster')['Silhouette'].agg(['mean', 'min', 'max']).round(3))
+
+plt.figure(figsize=(9, 4.5))
+sns.boxplot(data=df, x='Cluster', y='Silhouette', hue='Cluster', palette='tab10', legend=False)
+plt.axhline(0, color='red', linestyle='--', linewidth=1)
+plt.title('Silhouette Values by Cluster')
+plt.tight_layout()
+plt.show()
+
+new_customers = pd.DataFrame({
+    features[0]: [25, 75, 30, 70],
+    features[1]: [20, 80, 85, 25]
+})
+new_scaled = scaler.transform(new_customers)
+new_customers['Predicted Cluster'] = kmeans.predict(new_scaled)
+new_customers['Suggested Segment'] = new_customers['Predicted Cluster'].map(
+    cluster_profile['Suggested Segment']
+)
+display(new_customers)
